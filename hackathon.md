@@ -11,7 +11,7 @@
 - **Auth:** Convex Auth
 - **AI models:** OpenAI gpt-4o-mini, Venice deepseek-r1-671b
 - **Started:** 2026-09-22T06:45:45Z
-- **Last updated:** 2026-09-22T09:37:00Z
+- **Last updated:** 2026-09-22T09:52:00Z
 
 ## Log
 
@@ -26,5 +26,8 @@ Added end-to-end backend verification test suite proving the full tracking loop:
 
 ### 2026-09-22 - 3b3631b
 Implemented the autonomous hierarchical Work Graph Tree (`src/components/WorkGraphTree.tsx`), interactive 7-stage state-by-state Intent Execution Trail (`src/components/ExecutionTrail.tsx`), and slide-over Node Inspector (`src/components/NodeInspector.tsx`) integrated into `src/App.tsx`. Added `getGoalTreeAndTrail` query in `convex/nodes.ts` returning complete node trees, directed edges (`nodeEdges`), and active linear ancestor trails. Implemented interactive pipeline runner stepping through Raw Observation, Deterministic Aggregation, Transition Trigger, Context Snapshot, Cognitive Reasoning, Graph Mutation (dynamic branch sprouting), and User Continuity. Verified with 18/18 passing Vitest tests and clean `tsc -b && vite build` production compilation. Convex features: schema, tables, indexes, queries, mutations, actions, HTTP actions.
+
+### 2026-09-22 - 483f8ff
+Implemented Firecrawl web research backend (`convex/research.ts`), Obsidian markdown vault projection engine with `[[wikilinks]]` (`convex/obsidian.ts`), and integrated frontend views across 4 dedicated cockpit navigation modes (`src/App.tsx`): Cockpit Workspace, Chronological Timeline & Daily Review (`src/components/TimelineReview.tsx`), Firecrawl Web Research Dossiers (`src/components/ResearchDossier.tsx`), and Obsidian Vault Explorer (`src/components/ObsidianView.tsx`). Added "Research Branch with Firecrawl" action into `<NodeInspector>`. Verified with automated test suite `tests/research_obsidian.test.ts` (19/19 tests passing across 6 suites) and clean `tsc -b && vite build` production compilation. Convex features: schema, tables, indexes, queries, mutations, actions, HTTP actions.
 
 

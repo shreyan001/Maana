@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Focus,
+  Flame,
 } from "lucide-react";
 import { TreeNodeData } from "./WorkGraphTree";
 
@@ -16,6 +17,7 @@ interface NodeInspectorProps {
   onClose: () => void;
   onUpdateStatus?: (nodeId: string, status: TreeNodeData["status"]) => void;
   onSetFocused?: (nodeId: string) => void;
+  onTriggerResearch?: (nodeTitle: string) => void;
 }
 
 export default function NodeInspector({
@@ -24,6 +26,7 @@ export default function NodeInspector({
   onClose,
   onUpdateStatus,
   onSetFocused,
+  onTriggerResearch,
 }: NodeInspectorProps) {
   if (!node) return null;
 
@@ -156,6 +159,14 @@ export default function NodeInspector({
             <span>{node.status === "done" ? "Completed ✓" : "Mark Done"}</span>
           </button>
         </div>
+
+        <button
+          onClick={() => onTriggerResearch && onTriggerResearch(node.title)}
+          className="w-full flex items-center justify-center gap-1.5 p-2.5 rounded-xl bg-orange-950/40 hover:bg-orange-900/50 border border-orange-800/60 text-orange-300 font-medium text-xs font-mono transition cursor-pointer"
+        >
+          <Flame className="w-3.5 h-3.5 text-orange-400" />
+          <span>Research Branch with Firecrawl</span>
+        </button>
       </div>
     </div>
   );
