@@ -1,0 +1,9 @@
+.lavish/
+node_modules/
+.venv/
+dist/
+build/
+coverage/
+.env
+.env.*
+!.env.example
