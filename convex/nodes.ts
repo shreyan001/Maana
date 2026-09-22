@@ -123,3 +123,67 @@ export const getGoalNodes = query({
       .collect();
   },
 });
+
+/**
+ * Returns the complete work graph hierarchy, edges, and active execution trail.
+ */
+export const getGoalTreeAndTrail = query({
+  args: {
+    goalId: v.id("goals"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return null;
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_identitySubject", (q) =>
+        q.eq("identitySubject", identity.subject)
+      )
+      .first();
+
+    if (!user) {
+      return null;
+    }
+
+    const goal = await ctx.db.get(args.goalId);
+    if (!goal || goal.userId !== user._id) {
+      return null;
+    }
+
+    const allNodes = await ctx.db
+      .query("nodes")
+      .withIndex("by_goal", (q) => q.eq("goalId", args.goalId))
+      .collect();
+
+    const allEdges = await ctx.db
+      .query("nodeEdges")
+      .withIndex("by_goal", (q) => q.eq("goalId", args.goalId))
+      .collect();
+
+    const nodeMap = new Map(allNodes.map((n) => [n._id, n]));
+
+    // Construct active trail from root to currentNodeId
+    const activeTrail: typeof allNodes = [];
+    if (goal.currentNodeId) {
+      let curr = nodeMap.get(goal.currentNodeId);
+      const visited = new Set<string>();
+      while (curr && !visited.has(curr._id)) {
+        visited.add(curr._id);
+        activeTrail.unshift(curr);
+        curr = curr.parentId ? nodeMap.get(curr.parentId) : undefined;
+      }
+    }
+
+    return {
+      goal,
+      nodes: allNodes,
+      edges: allEdges,
+      activeTrail,
+      currentNodeId: goal.currentNodeId,
+    };
+  },
+});
+

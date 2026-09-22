@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../convex/schema";
-import { internal } from "../convex/_generated/api";
+import { api, internal } from "../convex/_generated/api";
 import { Doc } from "../convex/_generated/dataModel";
 
 const modules = import.meta.glob("../convex/**/*.{ts,js}");
@@ -123,6 +123,33 @@ describe("Maana Graph Mutation & Cognitive Decisions (MAANA-REASONING-02)", () =
     expect(edges[0].fromNodeId).toBe(rootNodeId);
     expect(edges[0].toNodeId).toBe(decisionResult.createdNodeId);
     expect(edges[0].type).toBe("depends_on");
+
+    // 9. Verify getGoalTreeAndTrail returns full hierarchy, edges, and linear active trail
+    const treeAndTrail = await t
+      .withIdentity({ subject: "user_graph_01" })
+      .query(api.nodes.getGoalTreeAndTrail, { goalId });
+
+    expect(treeAndTrail).not.toBeNull();
+    expect(treeAndTrail?.nodes.length).toBe(2);
+    expect(treeAndTrail?.edges.length).toBe(1);
+    expect(treeAndTrail?.activeTrail.length).toBe(2);
+    expect(treeAndTrail?.activeTrail[0]._id).toBe(rootNodeId);
+    expect(treeAndTrail?.activeTrail[1]._id).toBe(decisionResult.createdNodeId);
+    expect(treeAndTrail?.currentNodeId).toBe(decisionResult.createdNodeId);
+
+    // 10. Verify updateNodeStatus marks node done
+    await t
+      .withIdentity({ subject: "user_graph_01" })
+      .mutation(api.nodes.updateNodeStatus, {
+        nodeId: decisionResult.createdNodeId!,
+        status: "done",
+      });
+
+    const updatedNode = await t.run(async (ctx) => {
+      return (await ctx.db.get(decisionResult.createdNodeId!)) as Doc<"nodes"> | null;
+    });
+    expect(updatedNode?.status).toBe("done");
+    expect(updatedNode?.completedAt).toBeDefined();
   });
 
   it("triggers non-intrusive intervention record on high-confidence sustained DRIFT", async () => {

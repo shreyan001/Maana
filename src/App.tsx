@@ -11,26 +11,19 @@ import {
   Activity as ActivityIcon,
   Sparkles,
   Zap,
+  FastForward,
 } from "lucide-react";
 
-
 import AuthModal from "./components/AuthModal";
+import WorkGraphTree, { TreeNodeData } from "./components/WorkGraphTree";
+import ExecutionTrail from "./components/ExecutionTrail";
+import NodeInspector from "./components/NodeInspector";
 
 interface MockGoal {
   _id: string;
   title: string;
   status: "active" | "paused" | "completed";
   createdAt: number;
-}
-
-interface MockNode {
-  _id: string;
-  title: string;
-  type: "goal" | "branch" | "dependency" | "exploration";
-  status: "active" | "waiting" | "done";
-  reason?: string;
-  confidence?: number;
-  timeSpent?: string;
 }
 
 interface MockTask {
@@ -48,10 +41,69 @@ interface LiveEventRecord {
   title?: string;
 }
 
+interface DecisionRecord {
+  classification: string;
+  confidence: number;
+  reason: string;
+  model: string;
+  suggestedNode?: string;
+  timestamp?: number;
+}
+
 const PRESET_GOALS = [
   "Learn data structures well enough to solve interview problems",
   "Debug Convex reactive WebSocket reconnection latency",
   "Design intent-preserving autonomous agent architecture",
+];
+
+const INITIAL_NODES: TreeNodeData[] = [
+  {
+    _id: "node_root",
+    title: "Learn data structures well enough to solve interview problems",
+    type: "goal",
+    status: "done",
+    timeSpent: "1h 45m",
+    confidence: 1.0,
+  },
+  {
+    _id: "node_b1",
+    parentId: "node_root",
+    title: "Binary Search & Two Pointers Pattern",
+    type: "branch",
+    status: "done",
+    reason: "Observed LeetCode #704 problem and video breakdown",
+    timeSpent: "38m",
+    confidence: 0.94,
+  },
+  {
+    _id: "node_d1",
+    parentId: "node_b1",
+    title: "Bisect Left vs Right Termination Invariants",
+    type: "dependency",
+    status: "done",
+    reason: "Discovered prerequisite while debugging off-by-one boundary bugs",
+    timeSpent: "22m",
+    confidence: 0.98,
+  },
+  {
+    _id: "node_d2",
+    parentId: "node_b1",
+    title: "Range Query Search (LeetCode #34)",
+    type: "branch",
+    status: "active",
+    reason: "Applying bisect invariant to locate first and last boundaries",
+    timeSpent: "15m",
+    confidence: 0.92,
+  },
+  {
+    _id: "node_e1",
+    parentId: "node_d2",
+    title: "Rotated Sorted Array Pivot Analysis",
+    type: "exploration",
+    status: "waiting",
+    reason: "Anticipated follow-up problem based on leetcode pattern clustering",
+    confidence: 0.88,
+  },
 ];
 
 export default function App() {
@@ -61,6 +113,7 @@ export default function App() {
   const [showIntervention, setShowIntervention] = useState(false);
   const [interventionChoice, setInterventionChoice] = useState<string | null>(null);
 
+  // Active Goal State
   const [activeGoal, setActiveGoal] = useState<MockGoal | null>({
     _id: "goal_01",
     title: "Learn data structures well enough to solve interview problems",
@@ -68,35 +121,25 @@ export default function App() {
     createdAt: Date.now() - 3600000,
   });
 
-  const [path, setPath] = useState<MockNode[]>([
-    {
-      _id: "node_01",
-      title: "Learn data structures well enough to solve interview problems",
-      type: "goal",
-      status: "done",
-      timeSpent: "45m",
-      confidence: 1.0,
-    },
-    {
-      _id: "node_02",
-      title: "Binary Search & Two Pointers Pattern",
-      type: "branch",
-      status: "done",
-      reason: "Observed LeetCode #704 problem and video breakdown",
-      timeSpent: "28m",
-      confidence: 0.94,
-    },
-    {
-      _id: "node_03",
-      title: "Bisect Left vs Right Edge Invariants",
-      type: "dependency",
-      status: "active",
-      reason: "Discovered prerequisite while debugging off-by-one boundary bugs",
-      timeSpent: "14m",
-      confidence: 0.96,
-    },
-  ]);
+  // Hierarchical Work Graph Nodes
+  const [nodes, setNodes] = useState<TreeNodeData[]>(INITIAL_NODES);
+  const [activeNodeId, setActiveNodeId] = useState<string>("node_d2");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
+  // State-by-State Execution Pipeline
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(7);
+  const [isSimulatingPipeline, setIsSimulatingPipeline] = useState<boolean>(false);
+  const [recentDecision, setRecentDecision] = useState<DecisionRecord>({
+    classification: "DEPENDENCY",
+    confidence: 0.96,
+    reason:
+      "Off-by-one errors in binary search naturally require bisect left vs right termination invariant. Legitimate learning prerequisite; node added to branch.",
+    model: "OpenAI gpt-4o-mini (Structured JSON)",
+    suggestedNode: "Bisect Left vs Right Termination Invariants",
+    timestamp: Date.now() - 900000,
+  });
+
+  // Actionable Tasks
   const [tasks, setTasks] = useState<MockTask[]>([
     {
       _id: "task_01",
@@ -117,10 +160,9 @@ export default function App() {
       priority: "medium",
     },
   ]);
-
   const [newTaskTitle, setNewTaskTitle] = useState("");
 
-  // Live telemetry state
+  // Live Telemetry Event Stream
   const [recentEvents, setRecentEvents] = useState<LiveEventRecord[]>([
     {
       timestamp: Date.now() - 120000,
@@ -133,8 +175,8 @@ export default function App() {
       timestamp: Date.now() - 45000,
       type: "TAB_ACTIVE",
       domain: "leetcode.com",
-      title: "LeetCode 704 — Binary Search",
-      url: "https://leetcode.com/problems/binary-search",
+      title: "LeetCode 34 — Find First and Last Position",
+      url: "https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array",
     },
   ]);
 
@@ -156,18 +198,40 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Compute ancestors list for selected node (for the Node Inspector)
+  const getAncestors = (nodeId: string): TreeNodeData[] => {
+    const nodeMap = new Map(nodes.map((n) => [n._id, n]));
+    const ancestors: TreeNodeData[] = [];
+    let curr = nodeMap.get(nodeId);
+    const visited = new Set<string>();
+
+    while (curr && curr.parentId && !visited.has(curr.parentId)) {
+      visited.add(curr.parentId);
+      const parent = nodeMap.get(curr.parentId);
+      if (parent) {
+        ancestors.unshift(parent);
+        curr = parent;
+      } else {
+        break;
+      }
+    }
+    return ancestors;
+  };
+
   const handleCreateGoal = (e: React.FormEvent) => {
     e.preventDefault();
     if (!goalInput.trim()) return;
+    const newGoalId = "goal_" + Date.now();
+    const rootNodeId = "node_" + Date.now();
     setActiveGoal({
-      _id: "goal_" + Date.now(),
+      _id: newGoalId,
       title: goalInput.trim(),
       status: "active",
       createdAt: Date.now(),
     });
-    setPath([
+    setNodes([
       {
-        _id: "node_" + Date.now(),
+        _id: rootNodeId,
         title: goalInput.trim(),
         type: "goal",
         status: "active",
@@ -175,19 +239,23 @@ export default function App() {
         timeSpent: "Just started",
       },
     ]);
+    setActiveNodeId(rootNodeId);
+    setSelectedNodeId(rootNodeId);
     setGoalInput("");
   };
 
   const handleSelectPreset = (preset: string) => {
+    const newGoalId = "goal_" + Date.now();
+    const rootNodeId = "node_" + Date.now();
     setActiveGoal({
-      _id: "goal_" + Date.now(),
+      _id: newGoalId,
       title: preset,
       status: "active",
       createdAt: Date.now(),
     });
-    setPath([
+    setNodes([
       {
-        _id: "node_" + Date.now(),
+        _id: rootNodeId,
         title: preset,
         type: "goal",
         status: "active",
@@ -195,6 +263,8 @@ export default function App() {
         timeSpent: "Just started",
       },
     ]);
+    setActiveNodeId(rootNodeId);
+    setSelectedNodeId(rootNodeId);
   };
 
   const handleToggleTask = (taskId: string) => {
@@ -222,49 +292,138 @@ export default function App() {
     setNewTaskTitle("");
   };
 
-  const handleSimulateEvent = () => {
-    const mockEvents: LiveEventRecord[] = [
+  // Node Status Update from NodeInspector
+  const handleUpdateNodeStatus = (nodeId: string, newStatus: TreeNodeData["status"]) => {
+    setNodes((prev) =>
+      prev.map((n) => (n._id === nodeId ? { ...n, status: newStatus } : n))
+    );
+  };
+
+  // Set Focused Node from NodeInspector
+  const handleSetFocusedNode = (nodeId: string) => {
+    setActiveNodeId(nodeId);
+  };
+
+  // State-by-State Execution Runner (Simulates 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7)
+  const runStatePipeline = () => {
+    if (isSimulatingPipeline) return;
+    setIsSimulatingPipeline(true);
+    setCurrentStepIndex(1);
+
+    const mockCandidates = [
       {
-        timestamp: Date.now(),
-        type: "TAB_ACTIVE",
-        domain: "github.com",
-        title: "shreyan001/Maana — Intent-Preserving Agent",
-        url: "https://github.com/shreyan001/Maana",
+        event: {
+          timestamp: Date.now(),
+          type: "TAB_ACTIVE",
+          domain: "leetcode.com",
+          title: "LeetCode 33 — Search in Rotated Sorted Array",
+          url: "https://leetcode.com/problems/search-in-rotated-sorted-array",
+        },
+        nodeTitle: "Pivot Inflection Point Identification",
+        type: "dependency" as const,
+        reason:
+          "Encountered rotated array search; requires locating inflection pivot index before binary partition.",
+        classification: "DEPENDENCY",
+        confidence: 0.95,
       },
       {
-        timestamp: Date.now(),
-        type: "YOUTUBE_WATCH",
-        domain: "youtube.com",
-        title: "Mitigating Off-By-One Errors with Two Pointers",
-        url: "https://youtube.com/watch?v=adv_pointer_02",
+        event: {
+          timestamp: Date.now(),
+          type: "GITHUB_DOC",
+          domain: "github.com",
+          title: "Bisect Module Invariants Documentation",
+          url: "https://github.com/python/cpython/blob/main/Lib/bisect.py",
+        },
+        nodeTitle: "Python bisect_left Insertion Semantics",
+        type: "branch" as const,
+        reason:
+          "Observed study of stdlib bisect source to understand left-vs-right insertion indices.",
+        classification: "BRANCH",
+        confidence: 0.93,
       },
       {
-        timestamp: Date.now(),
-        type: "TAB_ACTIVE",
-        domain: "leetcode.com",
-        title: "LeetCode 34 — Find First and Last Position",
-        url: "https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array",
+        event: {
+          timestamp: Date.now(),
+          type: "YOUTUBE_WATCH",
+          domain: "youtube.com",
+          title: "Two Pointers Fast & Slow Convergence Pattern",
+          url: "https://youtube.com/watch?v=fast_slow_01",
+        },
+        nodeTitle: "Floyd Cycle Detection & Array Duplicates",
+        type: "exploration" as const,
+        reason:
+          "Watched video connecting two-pointer binary search with cycle detection.",
+        classification: "EXPLORATION",
+        confidence: 0.89,
       },
     ];
-    const picked = mockEvents[Math.floor(Math.random() * mockEvents.length)];
-    setRecentEvents((prev) => [picked, ...prev.slice(0, 9)]);
 
-    // Propose an inferred branch
-    if (path.length < 5 && Math.random() > 0.4) {
-      setPath((prev) => [
-        ...prev,
-        {
-          _id: "node_" + Date.now(),
-          title: "Two Pointers Convergence Condition",
-          type: "branch",
-          status: "active",
-          reason: `Discovered from recent activity on ${picked.domain}`,
-          confidence: 0.92,
-          timeSpent: "1m",
-        },
-      ]);
-    }
+    const candidate = mockCandidates[Math.floor(Math.random() * mockCandidates.length)];
+
+    // State 1: Observation
+    setRecentEvents((prev) => [candidate.event, ...prev.slice(0, 9)]);
+
+    const stepDelays = [600, 1200, 1800, 2400, 3000, 3600];
+
+    // State 2: Aggregation
+    setTimeout(() => setCurrentStepIndex(2), stepDelays[0]);
+
+    // State 3: Transition Trigger
+    setTimeout(() => setCurrentStepIndex(3), stepDelays[1]);
+
+    // State 4: Context Snapshot
+    setTimeout(() => setCurrentStepIndex(4), stepDelays[2]);
+
+    // State 5: Cognitive Reasoning
+    setTimeout(() => {
+      setCurrentStepIndex(5);
+      setRecentDecision({
+        classification: candidate.classification,
+        confidence: candidate.confidence,
+        reason: candidate.reason,
+        model: "OpenAI gpt-4o-mini (Structured JSON)",
+        suggestedNode: candidate.nodeTitle,
+        timestamp: Date.now(),
+      });
+    }, stepDelays[3]);
+
+    // State 6: Graph Mutation (Add node to tree under active node)
+    setTimeout(() => {
+      setCurrentStepIndex(6);
+      const newNodeId = "node_" + Date.now();
+      const parentId = activeNodeId || "node_root";
+
+      const newNode: TreeNodeData = {
+        _id: newNodeId,
+        parentId,
+        title: candidate.nodeTitle,
+        type: candidate.type,
+        status: "active",
+        reason: candidate.reason,
+        confidence: candidate.confidence,
+        timeSpent: "Just added",
+      };
+
+      setNodes((prev) => [...prev, newNode]);
+      setActiveNodeId(newNodeId);
+      setSelectedNodeId(newNodeId);
+    }, stepDelays[4]);
+
+    // State 7: User Continuity Completed
+    setTimeout(() => {
+      setCurrentStepIndex(7);
+      setIsSimulatingPipeline(false);
+    }, stepDelays[5]);
   };
+
+  // Manual Step Forward
+  const handleStepForward = () => {
+    setCurrentStepIndex((prev) => (prev < 7 ? prev + 1 : 1));
+  };
+
+  const selectedNode = selectedNodeId
+    ? nodes.find((n) => n._id === selectedNodeId) || null
+    : null;
 
   return (
     <div className="min-h-screen bg-[#070709] text-[#fafafa] flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
@@ -273,6 +432,15 @@ export default function App() {
         onClose={() => setIsAuthOpen(false)}
         currentToken={userToken}
         onUpdateToken={setUserToken}
+      />
+
+      {/* Node Inspector Drawer */}
+      <NodeInspector
+        node={selectedNode}
+        ancestors={selectedNode ? getAncestors(selectedNode._id) : []}
+        onClose={() => setSelectedNodeId(null)}
+        onUpdateStatus={handleUpdateNodeStatus}
+        onSetFocused={handleSetFocusedNode}
       />
 
       {/* Top Ambient Light Glow */}
@@ -290,7 +458,7 @@ export default function App() {
                 MAANA
               </h1>
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 shadow-sm">
-                v0.3.0-live
+                v0.4.0-tree-trail
               </span>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -304,20 +472,34 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3 text-xs">
-          {/* Simulation Trigger Button */}
-          <button
-            onClick={handleSimulateEvent}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-700/80 transition cursor-pointer shadow-sm text-xs"
-            title="Simulate a real browser tab switch event"
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
-            <span>Simulate Event</span>
-          </button>
+          {/* Step Pipeline Controls */}
+          <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
+            <button
+              onClick={runStatePipeline}
+              disabled={isSimulatingPipeline}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                isSimulatingPipeline
+                  ? "bg-indigo-600 text-white animate-pulse"
+                  : "bg-indigo-950 hover:bg-indigo-900 text-indigo-200"
+              }`}
+              title="Run 7-stage state pipeline automatically"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
+              <span>{isSimulatingPipeline ? `State ${currentStepIndex}/7...` : "Run Pipeline"}</span>
+            </button>
+            <button
+              onClick={handleStepForward}
+              className="px-2.5 py-1 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition text-xs font-mono"
+              title="Manually advance to next state"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {/* Extension Status Button */}
           <button
             onClick={() => setIsAuthOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/50 hover:bg-indigo-900/60 text-indigo-200 hover:text-white border border-indigo-700/50 transition cursor-pointer shadow-sm text-xs font-medium"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-700/80 transition cursor-pointer shadow-sm text-xs font-medium"
           >
             <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
             <span>Extension Connect</span>
@@ -327,13 +509,13 @@ export default function App() {
 
       {/* Main Cockpit Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Goal, Discovered Work Graph & Tasks */}
+        {/* Left 2 Cols: Goal, Discovered Work Graph Tree, Execution Trail & Tasks */}
         <div className="lg:col-span-2 space-y-6">
 
           {/* Active Goal Surface */}
           <section className="relative overflow-hidden rounded-2xl p-6 bg-gradient-to-br from-zinc-900/90 to-zinc-950/90 border border-zinc-800/90 shadow-2xl backdrop-blur-md">
             <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
-            
+
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-800/80">
               <span className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
                 <Compass className="w-4 h-4 text-indigo-400" />
@@ -360,7 +542,7 @@ export default function App() {
                     Observing Work Automatically
                   </span>
                   <span>•</span>
-                  <span>0 clerical subtasks required</span>
+                  <span>{nodes.length} Discovered Nodes in Hierarchy</span>
                   <span>•</span>
                   <button
                     onClick={() => setActiveGoal(null)}
@@ -405,96 +587,48 @@ export default function App() {
             )}
           </section>
 
-          {/* Discovered Work Graph & Branches */}
+          {/* Autonomous Hierarchical Work Graph Tree */}
           <section className="rounded-2xl p-6 bg-zinc-900/40 border border-zinc-800/80 shadow-xl backdrop-blur-md space-y-4">
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-800/80">
               <div className="flex items-center gap-2">
                 <GitBranch className="w-4 h-4 text-cyan-400" />
                 <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-300 font-mono">
-                  Autonomous Work Graph & Discovered Path
+                  Autonomous Work Graph Hierarchy & Discovered Branches
                 </h2>
               </div>
-              <span className="text-xs font-mono px-2.5 py-0.5 rounded-md bg-cyan-950/60 border border-cyan-800/60 text-cyan-300">
-                {path.length} Discovered Nodes
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono px-2.5 py-0.5 rounded-md bg-cyan-950/60 border border-cyan-800/60 text-cyan-300">
+                  {nodes.length} Nodes in Tree
+                </span>
+                <span className="text-xs font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400">
+                  Click any node to inspect
+                </span>
+              </div>
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              The graph is discovered from actual work. When you watch tutorials, search docs, or debug boundary bugs, Maana automatically branches and records inferred dependencies.
+              The tree is dynamically generated from real activities and cognitive inferences. Branches sprout when sub-problems are detected, maintaining intent without forcing manual organization.
             </p>
 
-            {/* Visual Node Tree */}
-            <div className="space-y-3 relative before:content-[''] before:absolute before:left-5 before:top-4 before:bottom-4 before:w-0.5 before:bg-gradient-to-b before:from-indigo-500 before:via-cyan-500 before:to-transparent">
-              {path.map((node, index) => {
-                const isCurrent = index === path.length - 1;
-                return (
-                  <div
-                    key={node._id}
-                    className={`relative pl-10 transition duration-200 group`}
-                  >
-                    {/* Node Bullet Marker */}
-                    <div
-                      className={`absolute left-3.5 top-4 w-3.5 h-3.5 rounded-full border-2 -translate-x-1/2 flex items-center justify-center transition ${
-                        isCurrent
-                          ? "bg-indigo-500 border-white shadow-lg shadow-indigo-500/50"
-                          : "bg-zinc-900 border-cyan-500/60"
-                      }`}
-                    >
-                      {isCurrent && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                      )}
-                    </div>
-
-                    <div
-                      className={`p-4 rounded-xl border text-sm transition ${
-                        isCurrent
-                          ? "bg-indigo-950/20 border-indigo-700/80 shadow-md shadow-indigo-950/30"
-                          : "bg-zinc-950/60 border-zinc-800/80 hover:border-zinc-700"
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-white tracking-tight">
-                            {node.title}
-                          </span>
-                          <span
-                            className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded-md border font-medium ${
-                              node.type === "goal"
-                                ? "bg-purple-950/60 border-purple-800/60 text-purple-300"
-                                : node.type === "branch"
-                                ? "bg-cyan-950/60 border-cyan-800/60 text-cyan-300"
-                                : "bg-emerald-950/60 border-emerald-800/60 text-emerald-300"
-                            }`}
-                          >
-                            {node.type}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2 text-xs font-mono">
-                          {node.timeSpent && (
-                            <span className="text-zinc-400">
-                              ⏱ {node.timeSpent}
-                            </span>
-                          )}
-                          {isCurrent && (
-                            <span className="text-xs px-2.5 py-0.5 rounded bg-indigo-600 text-white font-medium shadow-sm">
-                              Active Focus
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {node.reason && (
-                        <div className="mt-2 text-xs text-zinc-400 font-mono bg-zinc-900/60 p-2 rounded-lg border border-zinc-800/60 flex items-start gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-cyan-400 mt-0.5 shrink-0" />
-                          <span>Inferred: {node.reason}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Hierarchical Interactive Tree */}
+            <div className="mt-3">
+              <WorkGraphTree
+                nodes={nodes}
+                activeNodeId={activeNodeId}
+                selectedNodeId={selectedNodeId || undefined}
+                onSelectNode={(nodeId) => setSelectedNodeId(nodeId)}
+              />
             </div>
+          </section>
+
+          {/* State-by-State Intent Execution Trail */}
+          <section>
+            <ExecutionTrail
+              currentStepIndex={currentStepIndex}
+              recentDecision={recentDecision}
+              latestActivityTitle={recentEvents[0]?.title || "LeetCode 34 — Range Query"}
+              goalTitle={activeGoal?.title || "Learn data structures"}
+            />
           </section>
 
           {/* Actionable Contextual Tasks */}
@@ -651,19 +785,19 @@ export default function App() {
               <div className="p-3.5 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-1">
                 <span className="text-[11px] text-zinc-400 font-mono">Focus Time</span>
                 <p className="text-xl font-mono font-bold text-emerald-400">
-                  1h 27m
+                  1h 45m
                 </p>
               </div>
               <div className="p-3.5 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-1">
                 <span className="text-[11px] text-zinc-400 font-mono">Drift Score</span>
                 <p className="text-xl font-mono font-bold text-indigo-400">
-                  0.18 <span className="text-xs text-emerald-400">(Focused)</span>
+                  0.14 <span className="text-xs text-emerald-400">(Focused)</span>
                 </p>
               </div>
               <div className="p-3.5 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-1">
-                <span className="text-[11px] text-zinc-400 font-mono">Discovered</span>
+                <span className="text-[11px] text-zinc-400 font-mono">Tree Nodes</span>
                 <p className="text-xl font-mono font-bold text-cyan-400">
-                  3 Nodes
+                  {nodes.length} Discovered
                 </p>
               </div>
               <div className="p-3.5 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-1">
@@ -762,18 +896,22 @@ export default function App() {
             <div className="p-3.5 bg-zinc-950/80 border border-zinc-800/80 rounded-xl text-xs font-mono space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Classification:</span>
-                <span className="text-emerald-400 font-bold">DEPENDENCY</span>
+                <span className="text-emerald-400 font-bold uppercase">
+                  {recentDecision.classification}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Confidence:</span>
-                <span className="text-zinc-200">0.96 (High)</span>
+                <span className="text-zinc-200">
+                  {Math.round(recentDecision.confidence * 100)}% (High)
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Reasoning Model:</span>
-                <span className="text-zinc-400">gpt-4o-mini / structured JSON</span>
+                <span className="text-zinc-400">{recentDecision.model}</span>
               </div>
               <div className="pt-2 border-t border-zinc-800/80 text-[11px] text-zinc-400 leading-relaxed font-sans">
-                "Off-by-one errors in binary search naturally require bisect left vs right termination invariant. Legitimate learning prerequisite; node added to branch."
+                "{recentDecision.reason}"
               </div>
             </div>
           </section>
