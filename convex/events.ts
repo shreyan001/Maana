@@ -30,6 +30,20 @@ export const recordEvent = mutation({
     const { userId } = await requireUser(ctx);
     const eventTime = args.timestamp ?? Date.now();
 
+    const payload = args.payload || {};
+    const domain = args.domain ?? payload.domain;
+    const url = args.url ?? payload.url;
+    const title = args.title ?? payload.title;
+    const tabId = args.tabId ?? payload.tabId;
+
+    const fullPayload = {
+      ...payload,
+      ...(domain ? { domain } : {}),
+      ...(url ? { url } : {}),
+      ...(title ? { title } : {}),
+      ...(tabId !== undefined ? { tabId } : {}),
+    };
+
     // 1. Ingest raw observation event
     const eventId = await ctx.db.insert("events", {
       userId,
@@ -37,17 +51,11 @@ export const recordEvent = mutation({
       source: args.source,
       type: args.type,
       timestamp: eventTime,
-      payload: args.payload ?? {},
+      payload: fullPayload,
     });
 
-    // 2. Extract telemetry fields from args or payload
-    const payload = args.payload || {};
-    const domain = args.domain ?? payload.domain;
-    const url = args.url ?? payload.url;
-    const title = args.title ?? payload.title;
-    const tabId = args.tabId ?? payload.tabId;
+    // 2. Deterministically aggregate into activities and daily sessions (fast clock)
 
-    // 3. Deterministically aggregate into activities and daily sessions (fast clock)
     const aggregation = await processEventAggregation(ctx, userId, {
       source: args.source,
       type: args.type,
@@ -92,20 +100,29 @@ export const recordEventInternal = internalMutation({
   handler: async (ctx, args) => {
     const eventTime = args.timestamp ?? Date.now();
 
+    const payload = args.payload || {};
+    const domain = args.domain ?? payload.domain;
+    const url = args.url ?? payload.url;
+    const title = args.title ?? payload.title;
+    const tabId = args.tabId ?? payload.tabId;
+
+    const fullPayload = {
+      ...payload,
+      ...(domain ? { domain } : {}),
+      ...(url ? { url } : {}),
+      ...(title ? { title } : {}),
+      ...(tabId !== undefined ? { tabId } : {}),
+    };
+
     const eventId = await ctx.db.insert("events", {
       userId: args.userId,
       goalId: args.goalId,
       source: args.source,
       type: args.type,
       timestamp: eventTime,
-      payload: args.payload ?? {},
+      payload: fullPayload,
     });
 
-    const payload = args.payload || {};
-    const domain = args.domain ?? payload.domain;
-    const url = args.url ?? payload.url;
-    const title = args.title ?? payload.title;
-    const tabId = args.tabId ?? payload.tabId;
 
     const aggregation = await processEventAggregation(ctx, args.userId, {
       source: args.source,
